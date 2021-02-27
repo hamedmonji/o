@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:o/colors.dart';
+import 'package:o/profile/profile.dart';
 
 void main() {
-  runApp(App());
-}
-
-class App extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Container();
-  }
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(MaterialApp(
+    home: Profile(),
+    theme: ThemeData(
+        scaffoldBackgroundColor: AppColors.background,
+        brightness: Brightness.dark,
+        backgroundColor: AppColors.background),
+  ));
 }
