@@ -1,94 +1,58 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:o/colors.dart';
 import 'package:o/models/group.dart';
 import 'package:o/models/user.dart';
+import 'package:o/profile/data/profile_data.dart';
 
 class Profile extends StatelessWidget {
-  final Future<FirebaseApp> _initialization = Firebase.initializeApp();
+  final ProfileData profileData;
+
+  const Profile({Key key, @required this.profileData}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder(
-      future: _initialization,
+    return StreamBuilder<User>(
+      stream: profileData.getSelfUser(),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('failed to initilizing flutter'));
+          return Center(child: Text('failed loading user data'));
         }
-        final firebase = FirebaseFirestore.instance;
-        if (snapshot.connectionState == ConnectionState.done) {
-          return StreamBuilder<DocumentSnapshot>(
-            stream: FirebaseFirestore.instance.doc('/users/niko').snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.hasError) {
-                return Center(child: Text('failed loading user data'));
-              }
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return Center(child: Text("Loading"));
-              }
-              final user = User.from(snapshot.data.data());
-              return Scaffold(
-                body: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Positioned(
-                      top: 42,
-                      right: 42,
-                      child: CircleAvatar(
-                        radius: 68,
-                        backgroundImage: NetworkImage(user.imageUrl),
-                      ),
-                    ),
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.end,
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        if (user.groupIds.isEmpty)
-                          Positioned(
-                            top: 300,
-                            left: 0,
-                            right: 0,
-                            child: _NoGroups(
-                              onCreateGroup: (Group value) async {
-                                DocumentReference newGroupRef =
-                                    await FirebaseFirestore.instance
-                                        .collection('groups')
-                                        .add(value.toJson()
-                                          ..putIfAbsent(
-                                              'users', () => ['niko']));
-                                final newGroups = snapshot.data.data()
-                                  ..update(
-                                      'groups',
-                                      (_) =>
-                                          user.groupIds..add(newGroupRef.id));
-                                await FirebaseFirestore.instance
-                                    .doc('/users/niko')
-                                    .set(newGroups);
-                              },
-                              onJoinGroup: (String value) {},
-                            ),
-                          )
-                        else
-                          Center(
-                            child: Container(
-                                constraints: BoxConstraints(
-                                    minHeight: 300,
-                                    maxWidth: 300,
-                                    maxHeight: 600),
-                                child: _GroupsList(
-                                    firebase: firebase, user: user)),
-                          )
-                      ],
-                    )
-                  ],
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Center(child: Text("Loading"));
+        }
+        final user = snapshot.data;
+        return Scaffold(
+          body: Stack(
+            fit: StackFit.expand,
+            children: [
+              Positioned(
+                top: 42,
+                right: 42,
+                child: CircleAvatar(
+                  radius: 68,
+                  backgroundImage: NetworkImage(user.imageUrl),
                 ),
-              );
-            },
-          );
-        }
-
-        return Center(child: CircularProgressIndicator());
+              ),
+              Align(
+                alignment:
+                    FractionalOffset(0.5, user.groupIds.isEmpty ? 0.45 : 1),
+                child: user.groupIds.isEmpty
+                    ? _NoGroups(
+                        onCreateGroup: (Group newGroup) async {
+                          await profileData.createGroupFor(user, newGroup);
+                        },
+                        onJoinGroup: (String value) {},
+                      )
+                    : Container(
+                        constraints:
+                            BoxConstraints(maxHeight: 300, minHeight: 300),
+                        child:
+                            _GroupsList(profileData: profileData, user: user)),
+              )
+            ],
+          ),
+        );
       },
     );
   }
@@ -97,42 +61,37 @@ class Profile extends StatelessWidget {
 class _GroupsList extends StatelessWidget {
   const _GroupsList({
     Key key,
-    @required this.firebase,
+    @required this.profileData,
     @required this.user,
   }) : super(key: key);
 
-  final FirebaseFirestore firebase;
+  final ProfileData profileData;
   final User user;
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<QuerySnapshot>(
-      future: firebase
-          .collection('groups')
-          .where('users', arrayContains: user.name)
-          .get(),
+    return FutureBuilder<List<Group>>(
+      future: profileData.getGroupsFor(user),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          return Center(child: Text('failed loading user data'));
+          return Center(child: Text('failed loading group data'));
         }
         if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(child: Text("Loading groups"));
         }
         return ListView.builder(
           shrinkWrap: true,
-          itemCount: snapshot.data.docs.length,
+          itemCount: snapshot.data.length,
           itemBuilder: (context, index) {
-            final group = snapshot.data.docs[index].data();
+            final group = snapshot.data[index];
 
             return Padding(
               padding: const EdgeInsets.all(8.0),
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  CircleAvatar(
-                    radius: 54,
-                    backgroundImage: NetworkImage(group['image']),
-                  ),
+                  BorderdCircleImage(image: group.image),
                   SizedBox(
                     width: 20,
                   ),
@@ -140,7 +99,10 @@ class _GroupsList extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(group['name']),
+                      Text(
+                        group.name,
+                        style: TextStyle(fontSize: 32),
+                      ),
                       SizedBox(
                         height: 32,
                       ),
@@ -158,7 +120,7 @@ class _GroupsList extends StatelessWidget {
                                   color: Colors.green, shape: BoxShape.circle),
                             ),
                           ),
-                          Text('0 tasks')
+                          Text('${group.tasks.length} tasks')
                         ],
                       )
                     ],
@@ -169,6 +131,30 @@ class _GroupsList extends StatelessWidget {
           },
         );
       },
+    );
+  }
+}
+
+class BorderdCircleImage extends StatelessWidget {
+  const BorderdCircleImage({
+    Key key,
+    @required this.image,
+  }) : super(key: key);
+
+  final String image;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration:
+          BoxDecoration(shape: BoxShape.circle, color: AppColors.divider),
+      child: Padding(
+        padding: const EdgeInsets.all(1.0),
+        child: CircleAvatar(
+          radius: 54,
+          backgroundImage: NetworkImage(image),
+        ),
+      ),
     );
   }
 }
@@ -281,8 +267,8 @@ class __NoGroupsState extends State<_NoGroups>
                 if (_joinExpanded) {
                   widget.onJoinGroup(_joinController.text);
                 } else {
-                  widget.onCreateGroup(Group(_createController.text,
-                      'https://images.unsplash.com/photo-1541701494587-cb58502866ab?ixid=MXwxMjA3fDB8MHxzZWFyY2h8MXx8YWJzdHJhY3R8ZW58MHx8MHw%3D&ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'));
+                  // widget.onCreateGroup(Group(_createController.text,
+                  //     'https://images.unsplash.com/photo-1541701494587-cb58502866ab?ixid=MXwxMjA3fDB8MHxzZWFyY2h8MXx8YWJzdHJhY3R8ZW58MHx8MHw%3D&ixlib=rb-1.2.1&auto=format&fit=crop&w=500&q=60'));
                 }
               },
               child: Text(_joinExpanded ? 'Join Group' : 'Create group')),
